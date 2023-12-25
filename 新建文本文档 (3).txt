@@ -1,0 +1,622 @@
+module  traffic_light
+    (
+        input   wire    clk     ,
+        input   wire    rst_n   ,
+        input   wire    key_in  ,//用于开启和关闭系统
+        
+        output  reg     RED1    ,//A红
+        output  reg     YELLOW1 ,//A黄
+        output  reg     GREEN1  ,//A绿
+        output  reg     Turn_Left1,//A左转
+        
+        output  reg     RED2    ,//B红
+        output  reg     YELLOW2 ,//B黄
+        output  reg     GREEN2  ,//B绿 
+        output  reg     Turn_Left2, //B左转  
+        
+        output  reg[2:0]sel_seg ,//依次选择4个数码管
+        output  reg[7:0]dis_seg , //单个数码管显示  
+
+        output  wire [3:0] sel
+        
+    );
+    
+    reg         enable  ;
+    reg [25:0]  div_cnt ;//分频计数器 产生1Hz用
+    parameter   CNT_MAX=49_999_999;
+    reg [15:0]  cnt_1ms;//动态扫描用 1ms
+    parameter   CNT_MAX_1ms=16'd49_999;
+    
+    parameter   KEY_CNT_MAX=  20'd999_999;//消抖用
+    
+    reg [5:0]   cnt_40  ;//40秒计数器
+    reg [5:0]   cnt_30  ;//30秒计数器
+    reg [5:0]   cnt_15  ;//15秒计数器
+    reg [5:0]   cnt_5   ;//5秒计数器
+
+    
+    wire[3:0]   bcd_40_unit ;//40s计数器的个位
+    wire[3:0]   bcd_40_ten  ;//40s计数器的十位    
+    wire[3:0]   bcd_30_unit ;//30s计数器的个位
+    wire[3:0]   bcd_30_ten  ;//30s计数器的十位  
+    wire[3:0]   bcd_15_unit ;//15s计数器的个位
+    wire[3:0]   bcd_15_ten  ;//15s计数器的十位  
+    wire[3:0]   bcd_5_unit  ;//5s计数器的个位
+    wire[3:0]   bcd_5_ten   ;//5s计数器的十位  
+    wire[3:0]   bcd_55_unit ;
+    wire[3:0]   bcd_55_ten ;
+    wire[3:0]   bcd_65_unit ;
+    wire[3:0]   bcd_65_ten ;
+
+    reg [3:0]   dis_num     ;//
+    
+    parameter   IDLE          = 4'b0000, 
+                A_green    = 4'b0001,  
+                A_yellow1  = 4'b0011,
+                A_left     = 4'b0010,
+                A_yellow2  = 4'b0110,
+                B_green  = 4'b0111,
+                B_yellow1= 4'b0101,
+                B_left   = 4'b0100,
+                B_yellow2= 4'b1100;
+ 
+    reg [3:0]   state   ;
+    reg [3:0]   sel_reg ;
+    wire    A_en;
+    wire    B_en;
+
+    assign sel = ~sel_reg;
+
+key_filter  
+#(
+    .CNT_MAX(KEY_CNT_MAX)
+)
+    key_filter_inst
+(
+    .clk      ( clk     )     ,
+    .rst_n    (rst_n    )     , 
+    .key_in   (key_in   )     ,
+    .key_flag (key_en   )   
+);
+
+    always@(posedge clk or negedge rst_n)//开启和关闭
+        begin
+            if(!rst_n)
+                enable<=1'b0;
+            else    if(key_en)
+                enable<=~enable;
+            else
+                enable<=enable;
+        end
+                
+    always@(posedge clk or negedge rst_n)//计数器
+        begin
+            if(!rst_n)
+                div_cnt<=26'd0;
+            else    if(enable)
+                begin
+                    if(div_cnt==CNT_MAX)
+                        div_cnt<=26'd0;
+                    else
+                        div_cnt<=div_cnt+1'b1;
+                end
+            else    
+                div_cnt<=26'd0;
+        end
+
+    always@(posedge clk or negedge rst_n)//40秒计数器
+        begin
+            if(!rst_n)
+                cnt_40<=6'd39;
+            else    if(enable&&state==A_green)
+                begin
+                    if(cnt_40==6'd0&&div_cnt==CNT_MAX)
+                        cnt_40<=6'd39;
+                    else    if(div_cnt==CNT_MAX)
+                        cnt_40<=cnt_40-1'b1;
+                    else
+                        cnt_40<=cnt_40;
+                end
+            else
+                cnt_40<=6'd39;
+        end        
+        
+    always@(posedge clk or negedge rst_n)//30秒计数器
+        begin
+            if(!rst_n)
+                cnt_30<=5'd29;
+            else    if(enable&&state==B_green)
+                begin
+                    if(cnt_30==5'd0&&div_cnt==CNT_MAX)
+                        cnt_30<=5'd29;
+                    else    if(div_cnt==CNT_MAX)
+                        cnt_30<=cnt_30-1'b1;
+                    else
+                        cnt_30<=cnt_30;
+                end
+            else
+                cnt_30<=5'd29;
+        end 
+
+    always@(posedge clk or negedge rst_n)//15秒计数器
+        begin
+            if(!rst_n)
+                cnt_15<=4'd14;
+            else    if(enable&&(state==A_left||state==B_left))
+                begin
+                    if(cnt_15==4'd0&&div_cnt==CNT_MAX)
+                        cnt_15<=4'd14;
+                    else    if(div_cnt==CNT_MAX)
+                        cnt_15<=cnt_15-1'b1;
+                    else
+                        cnt_15<=cnt_15;
+                end
+            else
+                cnt_15<=4'd14;
+        end 
+
+    always@(posedge clk or negedge rst_n)//5秒计数器
+        begin
+            if(!rst_n)
+                cnt_5<=3'd4;
+            else    if((state==A_yellow1||state==B_yellow1
+                    ||state==A_yellow2||state==B_yellow2)&&enable)
+                begin
+                    if(cnt_5==3'd0&&div_cnt==CNT_MAX)
+                        cnt_5<=3'd4;
+                    else    if(div_cnt==CNT_MAX)
+                        cnt_5<=cnt_5-1'b1;
+                    else
+                        cnt_5<=cnt_5;
+                end
+            else
+                cnt_5<=3'd4;
+        end   
+
+    reg [6:0] cnt_55;
+    always@(posedge clk or negedge rst_n)//55秒计数器
+        begin
+            if(!rst_n)
+                cnt_55<=7'd54;
+            else    if((state==B_left||state==B_green
+                    ||state==B_yellow1||state==B_yellow2)&&enable)
+                begin
+                    if(cnt_55==7'd0&&div_cnt==CNT_MAX)
+                        cnt_55<=7'd54;
+                    else    if(div_cnt==CNT_MAX)
+                        cnt_55<=cnt_55-1'b1;
+                    else
+                        cnt_55<=cnt_55;
+                end
+            else
+                cnt_55<=7'd54;
+        end 
+
+    reg [6:0] cnt_65;
+    always@(posedge clk or negedge rst_n)//65秒计数器
+        begin
+            if(!rst_n)
+                cnt_65<=7'd64;
+            else    if((state==A_left||state==A_green
+                    ||state==A_yellow1||state==A_yellow2)&&enable)
+                begin
+                    if(cnt_65==7'd0&&div_cnt==CNT_MAX)
+                        cnt_65<=7'd64;
+                    else    if(div_cnt==CNT_MAX)
+                        cnt_65<=cnt_65-1'b1;
+                    else
+                        cnt_65<=cnt_65;
+                end
+            else
+                cnt_65<=7'd64;
+        end 
+
+    always@(posedge clk or negedge rst_n)//状态转移
+        begin
+            if(!rst_n)
+                state<=IDLE;
+            else
+                case(state)
+                    IDLE:
+                        if(enable)
+                            state<=A_left;
+                        else
+                            state<=IDLE;
+                    A_left:
+                        if(cnt_15==4'd0&&div_cnt==CNT_MAX)
+                            state<=A_yellow1;
+                        else
+                            state<=A_left;
+                    A_yellow1:
+                        if(cnt_5==3'd0&&div_cnt==CNT_MAX)
+                            state<=A_green;
+                        else
+                            state<=A_yellow1;
+                    A_green:
+                        if(cnt_40==6'd0&&div_cnt==CNT_MAX)
+                            state<=A_yellow2;
+                        else
+                            state<=A_green;
+                    A_yellow2:
+                        if(cnt_5==3'd0&&div_cnt==CNT_MAX)
+                            state<=B_left;
+                        else
+                            state<=A_yellow2;
+                    B_left:
+                        if(cnt_15==4'd0&&div_cnt==CNT_MAX)
+                            state<=B_yellow1;
+                        else
+                            state<=B_left;
+                    B_yellow1:
+                        if(cnt_5==3'd0&&div_cnt==CNT_MAX)
+                            state<=B_green;
+                        else
+                            state<=B_yellow1;
+                    B_green:
+                        if(cnt_30==5'd0&&div_cnt==CNT_MAX)
+                            state<=B_yellow2;
+                        else
+                            state<=B_green;
+                    B_yellow2:
+                        if(cnt_5==3'd0&&div_cnt==CNT_MAX)
+                            state<=A_green;
+                        else
+                            state<=B_yellow2;
+                    default:state<=IDLE;
+                endcase
+        end
+    
+    always@(posedge clk or negedge rst_n)//A绿灯
+        begin
+            if(!rst_n)   
+                GREEN1<=1'b0;
+            else    if(enable)
+                begin   
+                    if(state==A_green)
+                        GREEN1<=1'b1;
+                    else
+                        GREEN1<=1'b0;
+                end
+            else
+                GREEN1<=1'b0;
+        end
+    
+    always@(posedge clk or negedge rst_n)//A黄灯
+        begin
+            if(!rst_n)   
+                YELLOW1<=1'b0;
+            else    if(enable)
+                begin   
+                    if(state==A_yellow1||state==A_yellow2)
+                        YELLOW1<=1'b1;
+                    else
+                        YELLOW1<=1'b0;
+                end
+            else
+                YELLOW1<=1'b0;
+        end  
+
+
+    always@(posedge clk or negedge rst_n)//A左拐灯
+        begin
+            if(!rst_n)   
+                Turn_Left1<=1'b0;
+            else    if(enable)
+                begin   
+                    if(state==A_left)
+                        Turn_Left1<=1'b1;
+                    else
+                        Turn_Left1<=1'b0;
+                end
+            else
+                Turn_Left1<=1'b0;
+        end 
+
+    always@(posedge clk or negedge rst_n)//A红灯
+        begin
+            if(!rst_n)   
+                RED1<=1'b0;
+            else    if(enable)
+                begin   
+                    if(state==B_green||state==B_yellow1
+                     ||state==B_left||state==B_yellow2)
+                        RED1<=1'b1;
+                    else
+                        RED1<=1'b0;
+                end
+            else
+                RED1<=1'b0;
+        end 
+
+    always@(posedge clk or negedge rst_n)//B绿灯
+        begin
+            if(!rst_n)   
+                GREEN2<=1'b0;
+            else    if(enable)
+                begin   
+                    if(state==B_green)
+                        GREEN2<=1'b1;
+                    else
+                        GREEN2<=1'b0;
+                end
+            else
+                GREEN2<=1'b0;
+        end
+    
+    always@(posedge clk or negedge rst_n)//B黄灯
+        begin
+            if(!rst_n)   
+                YELLOW2<=1'b0;
+            else    if(enable)
+                begin   
+                    if(state==B_yellow1||state==B_yellow2)
+                        YELLOW2<=1'b1;
+                    else
+                        YELLOW2<=1'b0;
+                end
+            else
+                YELLOW2<=1'b0;
+        end  
+
+
+    always@(posedge clk or negedge rst_n)//B左拐灯
+        begin
+            if(!rst_n)   
+                Turn_Left2<=1'b0;
+            else    if(enable)
+                begin   
+                    if(state==B_left)
+                        Turn_Left2<=1'b1;
+                    else
+                        Turn_Left2<=1'b0;
+                end
+            else
+                Turn_Left2<=1'b0;
+        end 
+
+    always@(posedge clk or negedge rst_n)//B红灯
+        begin
+            if(!rst_n)   
+                RED2<=1'b0;
+            else    if(enable)
+                begin   
+                    if(state==A_green||state==A_yellow1
+                     ||state==A_left||state==A_yellow2)
+                        RED2<=1'b1;
+                    else
+                        RED2<=1'b0;
+                end
+            else
+                RED2<=1'b0;
+        end 
+        
+    assign  A_en=(state==A_green||state==A_yellow1
+                    ||state==A_left||state==A_yellow2)?1'b1:1'b0;
+        
+    assign  B_en=(state==B_green||state==B_yellow1
+                    ||state==B_left||state==B_yellow2)?1'b1:1'b0;
+
+    /*二进制码转成BCD码的转码部分*/        
+    bin2bcd bin2bcd_40
+    (
+        .clk  (clk      ),
+        .rst_n(rst_n    ),
+        .data (cnt_40   ),
+        .unit (bcd_40_unit),
+        .ten  (bcd_40_ten)
+    );
+
+    bin2bcd bin2bcd_30
+    (
+        .clk  (clk      ),
+        .rst_n(rst_n    ),
+        .data (cnt_30   ),
+        .unit (bcd_30_unit),
+        .ten  (bcd_30_ten)
+    );
+    
+    bin2bcd bin2bcd_15
+    (
+        .clk  (clk      ),
+        .rst_n(rst_n    ),
+        .data (cnt_15   ),
+        .unit (bcd_15_unit),
+        .ten  (bcd_15_ten)
+    );
+    
+    bin2bcd bin2bcd_5
+    (
+        .clk  (clk      ),
+        .rst_n(rst_n    ),
+        .data (cnt_5    ),
+        .unit (bcd_5_unit),
+        .ten  (bcd_5_ten)
+    );  
+
+    bin2bcd bin2bcd_55
+    (
+        .clk  (clk      ),
+        .rst_n(rst_n    ),
+        .data (cnt_55    ),
+        .unit (bcd_55_unit),
+        .ten  (bcd_55_ten)
+    );  
+
+    bin2bcd bin2bcd_65
+    (
+        .clk  (clk      ),
+        .rst_n(rst_n    ),
+        .data (cnt_65    ),
+        .unit (bcd_65_unit),
+        .ten  (bcd_65_ten)
+    );  
+/*显示部分*/
+    // always @(posedge clk or negedge rst_n) begin
+    //     if(!rst_n)
+    //         sel_reg<=6'b0;
+    //     else if(cnt_sel==3'b0 && flag_1ms==1'b1)
+    //         sel_reg<=6'b000_001;
+    //     else if(flag_1ms==1'b1)
+    //         sel_reg<=sel_reg<<1;
+    //     else
+    //         sel_reg<=sel_reg;
+    // end
+
+    always@(posedge clk or negedge rst_n)
+        begin
+            if(!rst_n)
+                cnt_1ms<=16'd0;
+            else    if(enable)
+                begin
+                    if(cnt_1ms==CNT_MAX_1ms)
+                        cnt_1ms<=16'd0;
+                    else
+                        cnt_1ms<=cnt_1ms+1'b1;    
+                end
+        end
+
+    reg flag_1ms;
+    reg [1:0] cnt_sel;
+
+    always @(posedge clk or negedge rst_n) begin
+        if(!rst_n)
+            flag_1ms<=1'b0;
+        else if(cnt_1ms==CNT_MAX_1ms-1'b1)
+            flag_1ms<=1'b1;
+        else
+            flag_1ms<=1'b0;
+    end
+    always @(posedge clk or negedge rst_n) begin
+        if(!rst_n)
+            cnt_sel<=2'b0;
+        else if(cnt_sel==2'd3 && flag_1ms==1'b1)
+            cnt_sel<=2'b0;
+        else if(flag_1ms==1'b1)
+            cnt_sel<=cnt_sel+1'b1; 
+        else
+            cnt_sel<=cnt_sel;
+    end
+    always @(posedge clk or negedge rst_n) begin  //每隔一段时间点亮一个数码管 
+        if(!rst_n)
+            sel_reg<=4'b0;
+        else if(cnt_sel==2'b0 && flag_1ms==1'b1)
+            sel_reg<=4'b0_001;
+        else if(flag_1ms==1'b1)
+            sel_reg<=sel_reg<<1;
+        else
+            sel_reg<=sel_reg;
+    end
+    // always@(posedge clk or negedge rst_n)  
+    //     begin
+    //         if(!rst_n)
+    //             sel_seg<=3'd0;
+    //         else    if(cnt_1ms==CNT_MAX_1ms&&(A_en||B_en))
+    //             sel_seg<=sel_seg+1'b1;
+    //         else
+    //             sel_seg<=sel_seg;
+    //     end
+    
+    always@(*)
+        begin
+            if(A_en)
+                begin
+                    if(state==A_green)
+                        case(cnt_sel)
+                            2'd0:dis_num =bcd_40_unit    ;
+                            2'd1:dis_num =bcd_40_ten     ;
+                            2'd2:dis_num =bcd_65_unit       ;
+                            2'd3:dis_num =bcd_65_ten        ;
+                            2'd4:dis_num =4'hF          ;
+                            2'd5:dis_num =4'hF          ;
+                            2'd6:dis_num =4'hF          ;
+                            2'd7:dis_num =4'hF          ;
+                        endcase
+                    else    if(state==A_yellow1||state==A_yellow2)
+                        case(cnt_sel)
+                            2'd0:dis_num =bcd_5_unit     ;
+                            2'd1:dis_num =bcd_5_ten    ;
+                            2'd2:dis_num =bcd_65_unit    ;
+                            2'd3:dis_num =bcd_65_ten     ;
+                            2'd4:dis_num =4'hF          ;
+                            2'd5:dis_num =4'hF          ;
+                            2'd6:dis_num =4'hF          ;
+                            2'd7:dis_num =4'hF          ;                         
+                        endcase
+                    else    if(state==A_left)
+                        case(cnt_sel)
+                            2'd0:dis_num =bcd_15_unit    ;
+                            2'd1:dis_num =bcd_15_ten   ;
+                            2'd2:dis_num =bcd_65_unit   ;
+                            2'd3:dis_num =bcd_65_ten    ;
+                            2'd4:dis_num =4'hF          ;
+                            2'd5:dis_num =4'hF          ;
+                            2'd6:dis_num =4'hF          ;
+                            2'd7:dis_num =4'hF          ;                              
+                        endcase
+                end
+            else    if(B_en)
+                begin
+                    if(state==B_green)
+                        case(cnt_sel)
+                            2'd0:dis_num =bcd_55_unit   ;
+                            2'd1:dis_num =bcd_55_ten    ;
+                            2'd2:dis_num =bcd_30_unit   ;
+                            2'd3:dis_num =bcd_30_ten    ;
+                            2'd4:dis_num =4'hF          ;
+                            2'd5:dis_num =4'hF          ;
+                            2'd6:dis_num =4'hF          ;
+                            2'd7:dis_num =4'hF          ;                              
+                        endcase
+                    else    if(state==B_yellow1||state==B_yellow2)
+                        case(cnt_sel)
+                            2'd0:dis_num =bcd_55_unit  ;
+                            2'd1:dis_num =bcd_55_ten   ;
+                            2'd2:dis_num =bcd_5_unit    ;
+                            2'd3:dis_num =bcd_5_ten    ;
+                            2'd4:dis_num =4'hF   ;
+                            2'd5:dis_num =4'hF   ;
+                            2'd6:dis_num =4'hF          ;
+                            2'd7:dis_num =4'hF          ;
+                        endcase
+                    else    if(state==B_left)
+                        case(cnt_sel)
+                            2'd0:dis_num =bcd_55_unit   ;
+                            2'd1:dis_num =bcd_55_ten    ;
+                            2'd2:dis_num =bcd_15_unit   ;
+                            2'd3:dis_num =bcd_15_ten    ;
+                            2'd4:dis_num =4'hF          ;
+                            2'd5:dis_num =4'hF          ;
+                            2'd6:dis_num =4'hF          ;
+                            2'd7:dis_num =4'hF          ;
+                        endcase
+                end
+            else
+                dis_num=4'hF;
+        end
+
+    always@(*)
+        case(dis_num)
+            //对应段                 abc_defg.
+            4'h0:       dis_seg = 8'b1100_0000;//fc
+            4'h1:       dis_seg = 8'b1111_1001;//60
+            4'h2:       dis_seg = 8'b1010_0100;//da
+            4'h3:       dis_seg = 8'b1011_0000;//f2
+            4'h4:       dis_seg = 8'b1001_1001;//66
+            4'h5:       dis_seg = 8'b1001_0010;//b6
+            4'h6:       dis_seg = 8'b1000_0010;//be
+            4'h7:       dis_seg = 8'b1111_1000;//e0
+            4'h8:       dis_seg = 8'b1000_0000;//fe
+            4'h9:       dis_seg = 8'b1001_0000;//e6
+            4'hA:       dis_seg = 8'b1110_1110;//66
+            4'hB:       dis_seg = 8'b0011_1110;//3e
+            4'hC:       dis_seg = 8'b1001_1100;//9c
+            4'hD:       dis_seg = 8'b0111_1010;//6a
+            4'hE:       dis_seg = 8'b1001_1110;//9e
+            4'hF:       dis_seg = 8'b1111_1111;//这里令F的时候关掉不用的数码管
+            default:    dis_seg = 8'b1111_1111;
+        endcase
+
+        //assign seg = ~dis_seg;    
+    
+endmodule
+    
